@@ -20,7 +20,7 @@ color_options = [
     "blue",
     "cyan",
     "white",
-    #    "rainbow",
+#    "rainbow",
 ]
 
 bad_colors = ["RESET"]
@@ -30,13 +30,10 @@ for code in codes:
     if not code.endswith("_EX") and code not in bad_colors:
         colors.append(code.lower())
 
-
 def get_terminal_size():
     return shutil.get_terminal_size((80, 20))
 
-
 columns, rows = get_terminal_size()
-
 
 def get_random_color():
     # We don't want to use black and white in our rainbow
@@ -48,7 +45,6 @@ def get_random_color():
 @click.group()
 def cli():
     pass
-
 
 @cli.command()
 @click.option("--speed", default=14, help="Increase to make it snow faster.")
@@ -106,19 +102,19 @@ def snow(speed, stack, particle, color):
             clear_screen()
             sys.exit(0)
 
-
 @cli.command()
 @click.option("--light-delay", default=1, help="Seconds between light changes")
+@click.option(
+    "--stack",
+    default=None,
+    help="Make the snow stack. Options",
+    type=click.Choice(["pile"]),
+)
+
 @click.option(
     "--color",
     default="green",
     help="Change the color of the tree",
-    type=click.Choice(colors + ["rainbow"]),
-)
-@click.option(
-    "--lights-color",
-    default=None,
-    help="Change the color of the lights",
     type=click.Choice(colors + ["rainbow"]),
 )
 @click.option(
@@ -133,15 +129,14 @@ def snow(speed, stack, particle, color):
     help="Change the partice used for the leaves.",
 )
 @click.option("--snow", default=True, help="Render snow")
-@click.option("--snow-particle", default=None, help="The particle for snow")
 @click.option("--snow-speed", default=20, help="Speed that the snow will fall")
-def tree(light_delay, color, lights_color, snow_color, particle, snow, snow_particle, snow_speed):
+def tree(light_delay, color, snow_color, particle, snow, snow_speed, stack):
     clear_screen()
     # (row, col, particle)
     treeparts = []
     trunkparts = []
 
-    particle = particle or '*'
+    particle = particle or get_random_flake()
 
     trunk_size = 3
     tree_rows = rows - trunk_size
@@ -178,16 +173,16 @@ def tree(light_delay, color, lights_color, snow_color, particle, snow, snow_part
 
             # its already on the screen, move it
             if col in snowflakes.keys():
-                move_flake(snowflakes, current_rows, col, None, snow_particle, snow_color)
+                move_flake(snowflakes, current_rows, col, stack, particle, snow_color)
             else:
                 # otherwise put it on the screen
-                flake = snow_particle if snow_particle else get_random_flake()
-                snowflakes[col] = [1, flake]
+                flake = particle if particle else get_random_flake()
+                snowflakes[col] = [1, flake, False]
                 print_snowflake_col(snowflakes, col, snow_color)
 
-            # key any flakes on the screen moving
+            # keep any flakes on the screen moving
             for flake in snowflakes.keys():
-                move_flake(snowflakes, current_rows, flake, None, snow_particle, snow_color)
+                move_flake(snowflakes, current_rows, flake, stack, particle, snow_color)
             ##### SNOW ######
 
         end = time.time()
@@ -202,14 +197,9 @@ def tree(light_delay, color, lights_color, snow_color, particle, snow, snow_part
                 # a tree particle.
                 if random.random() < 0.10 and part[0]:
                     final_particle = "o"
-                    final_color = lights_color if lights_color else get_random_color()
+                    final_color = get_random_color()
 
-                    new_tree[part_index] = (
-                        part[0],
-                        part[1],
-                        final_particle,
-                        final_color,
-                    )
+                    new_tree[part_index] = (part[0], part[1], final_particle, final_color)
             start = time.time()
 
         for part in new_tree:
@@ -277,6 +267,7 @@ def get_random_flake():
 
 
 def print_character(row, column, character, color):
+
     output = "\033[%s;%sH%s" % (row, column, character)
 
     if color:
@@ -306,20 +297,37 @@ def move_flake(snowflakes, current_rows, col, stack, particle, color):
 
     if stack == "pile":
         if col not in current_rows:
-            current_rows[col] = rows
+            current_rows[col] = [rows, None]
 
-        current_row = current_rows[col]
+        current_row = current_rows[col][0]
 
         # The current column has reached the top of
         # the screen, lets reset it so it drops the
         # pile back
         if current_row == 1:
             current_row = rows
-            current_rows[col] = current_row
+            current_rows[col][0] = current_row
+
+        thresh = 5
+        # check for decay, update timer if yes
+        if current_rows[col][1] is not None:
+            if (time.time() - current_rows[col][1]) > thresh:
+                  # make sure its at least 1 row first
+                  if current_rows[col][0] < rows:
+                      current_rows[col][0] += 1
+                      current_rows[col][1] = time.time()
 
         # If next row is the end, lets just move the rows up by one
-        if snowflakes[col][0] + 1 == current_row:
-            current_rows[col] -= 1
+        # flakes only stick with p=0.4, so they don't accumulate too fast
+        # keep snow from getting too high
+        max_height = 7
+        if (snowflakes[col][0] + 1 == current_row) and snowflakes[col][0] > (rows - max_height):
+            if random.random() > 0.6:
+                current_rows[col][0] -= 1
+                # if snow accumulates, start decay timer
+                current_rows[col][1] = time.time()
+            # current_rows[col][0] -= 1
+        
     else:
         current_row = rows
 
@@ -328,6 +336,7 @@ def move_flake(snowflakes, current_rows, col, stack, particle, color):
         char = particle
         if not particle:
             char = get_random_flake()
+     
         snowflakes[col] = [1, char]
         print_snowflake_col(snowflakes, col, color)
     else:
@@ -336,6 +345,7 @@ def move_flake(snowflakes, current_rows, col, stack, particle, color):
         # move down by one
         snowflakes[col][0] += 1
         print_snowflake_col(snowflakes, col, color)
+
 
 
 def signal_handler(sig, frame):
